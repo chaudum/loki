@@ -15,7 +15,7 @@ type ConfigTree struct {
 	Type    reflect.Type
 	Fields  []ConfigTree
 	Pointer uintptr
-	Flag    string
+	Flag    *flag.Flag
 }
 
 func indent(i int) string {
@@ -42,6 +42,10 @@ func getType(t reflect.Type) string {
 		return "float"
 	case reflect.Slice:
 		return "list[" + getType(t.Elem()) + "]"
+	case reflect.Struct:
+		return t.Name()
+	case reflect.Ptr:
+		return "*" + getType(t.Elem())
 	default:
 		return t.Kind().String()
 	}
@@ -90,8 +94,12 @@ func PrintConfigTree(t ConfigTree, i int) string {
 	if t.Type != nil && len(t.Fields) == 0 {
 		sb.WriteString(": ")
 		sb.WriteString(getType(t.Type))
-		sb.WriteString(" -")
-		sb.WriteString(t.Flag)
+		if t.Flag != nil {
+			sb.WriteString(" -")
+			sb.WriteString(t.Flag.Name)
+			sb.WriteString("=")
+			sb.WriteString(t.Flag.DefValue)
+		}
 	}
 	if len(t.Fields) > 0 {
 		sb.WriteString(" {\n")
@@ -116,14 +124,14 @@ func Root() ConfigTree {
 	return ConfigTree{Name: "root"}
 }
 
-func parseFlags(fs *flag.FlagSet) map[uintptr]string {
-	m := make(map[uintptr]string)
+func parseFlags(fs *flag.FlagSet) map[uintptr]*flag.Flag {
+	m := make(map[uintptr]*flag.Flag)
 	fs.VisitAll(func(f *flag.Flag) {
 		if f.Value.String() == "deprecated" {
 			return
 		}
 		val := reflect.ValueOf(f.Value)
-		m[val.Pointer()] = f.Name
+		m[val.Pointer()] = f
 	})
 	return m
 }
@@ -137,9 +145,9 @@ func main() {
 	root.RegisterFlags(fs)
 	flagByPtr := parseFlags(fs)
 
-	tree = WalkConfigTree(tree, func(f ConfigTree) ConfigTree {
-		f.Flag = flagByPtr[f.Pointer]
-		return f
+	tree = WalkConfigTree(tree, func(t ConfigTree) ConfigTree {
+		t.Flag = flagByPtr[t.Pointer]
+		return t
 	})
 
 	fmt.Println(PrintConfigTree(tree, 0))
