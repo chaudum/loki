@@ -5,18 +5,20 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-
-	"github.com/grafana/loki/pkg/loki"
 )
 
-type ConfigTree struct {
-	Name    string
-	Tag     []string
-	Type    reflect.Type
-	Fields  []ConfigTree
-	Pointer uintptr
-	Flag    *flag.Flag
+type Node struct {
+	Name     string
+	Desc     string
+	Type     reflect.Type
+	Tag      []string
+	Children []Node
+	Pointer  uintptr
+	Flag     *flag.Flag
+	IsRoot   bool
 }
+
+type Apply func(tree Node) Node
 
 func indent(i int) string {
 	sb := strings.Builder{}
@@ -63,7 +65,7 @@ func parseTag(tag string) (string, []string) {
 	}
 }
 
-func ParseTree(t ConfigTree, v reflect.Value) ConfigTree {
+func ParseTree(t Node, v reflect.Value) Node {
 	fields := reflect.VisibleFields(v.Type())
 	for _, field := range fields {
 		yamlTag := field.Tag.Get("yaml")
@@ -72,26 +74,27 @@ func ParseTree(t ConfigTree, v reflect.Value) ConfigTree {
 			continue
 		}
 		fieldValue := v.FieldByIndex(field.Index)
-		leave := ConfigTree{
+		node := Node{
 			Name: name,
 			Tag:  tags,
 			Type: field.Type,
 		}
 		switch field.Type.Kind() {
 		case reflect.Struct:
-			t.Fields = append(t.Fields, ParseTree(leave, fieldValue))
+			t.Children = append(t.Children, ParseTree(node, fieldValue))
 		default:
-			leave.Pointer = fieldValue.Addr().Pointer()
-			t.Fields = append(t.Fields, leave)
+			node.Pointer = fieldValue.Addr().Pointer()
+			t.Children = append(t.Children, node)
 		}
 	}
 	return t
 }
 
-func PrintConfigTree(t ConfigTree, i int) string {
+func PrintConfigTree(t Node, i int) string {
 	sb := strings.Builder{}
 	sb.WriteString(t.Name)
-	if t.Type != nil && len(t.Fields) == 0 {
+	sb.WriteString(fmt.Sprintf(" (%v)", t.IsRoot))
+	if t.Type != nil && len(t.Children) == 0 {
 		sb.WriteString(": ")
 		sb.WriteString(getType(t.Type))
 		if t.Flag != nil {
@@ -101,9 +104,9 @@ func PrintConfigTree(t ConfigTree, i int) string {
 			sb.WriteString(t.Flag.DefValue)
 		}
 	}
-	if len(t.Fields) > 0 {
+	if len(t.Children) > 0 {
 		sb.WriteString(" {\n")
-		for _, field := range t.Fields {
+		for _, field := range t.Children {
 			sb.WriteString(indent(i+1) + PrintConfigTree(field, i+1) + "\n")
 		}
 		sb.WriteString(indent(i) + "}")
@@ -111,17 +114,17 @@ func PrintConfigTree(t ConfigTree, i int) string {
 	return sb.String()
 }
 
-func WalkConfigTree(t ConfigTree, fn func(f ConfigTree) ConfigTree) ConfigTree {
-	if len(t.Fields) > 0 {
-		for i, field := range t.Fields {
-			t.Fields[i] = WalkConfigTree(field, fn)
+func WalkConfigTree(tree Node, fn Apply) Node {
+	if len(tree.Children) > 0 {
+		for i := range tree.Children {
+			tree.Children[i] = WalkConfigTree(tree.Children[i], fn)
 		}
 	}
-	return fn(t)
+	return fn(tree)
 }
 
-func Root() ConfigTree {
-	return ConfigTree{Name: "root"}
+func Tree() Node {
+	return Node{Name: "root"}
 }
 
 func parseFlags(fs *flag.FlagSet) map[uintptr]*flag.Flag {
@@ -136,19 +139,35 @@ func parseFlags(fs *flag.FlagSet) map[uintptr]*flag.Flag {
 	return m
 }
 
+func ApplyRootBlocks(tree Node, blocks []Block) Node {
+	return WalkConfigTree(tree, func(node Node) Node {
+		for _, block := range blocks {
+			t := reflect.TypeOf(block.Type)
+			if node.Type == t {
+				node.IsRoot = true
+				node.Desc = block.Desc
+				fmt.Println("block:", node.Name, block.Desc, getType(t))
+			}
+		}
+		return node
+	})
+}
+
 func main() {
-	root := &loki.Config{}
+	root := Config()
 	v := reflect.ValueOf(root)
-	tree := ParseTree(Root(), v.Elem())
+	tree := ParseTree(Tree(), v.Elem())
 
 	fs := flag.NewFlagSet("docs", flag.PanicOnError)
 	root.RegisterFlags(fs)
 	flagByPtr := parseFlags(fs)
 
-	tree = WalkConfigTree(tree, func(t ConfigTree) ConfigTree {
+	tree = WalkConfigTree(tree, func(t Node) Node {
 		t.Flag = flagByPtr[t.Pointer]
 		return t
 	})
 
 	fmt.Println(PrintConfigTree(tree, 0))
+
+	tree = ApplyRootBlocks(tree, Blocks())
 }
