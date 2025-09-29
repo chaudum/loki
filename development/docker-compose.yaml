@@ -1,0 +1,106 @@
+services:
+  loki-init:
+    image: grafana/loki:3.5.2
+    container_name: loki-init
+    networks:
+      loki_iceberg:
+    user: root
+    entrypoint:
+      - "chown"
+      - "10001:10001"
+      - "/var/lib/loki"
+    volumes:
+      - "loki:/var/lib/loki"
+  loki:
+    # image: grafana/loki:3.5.2
+    build:
+      context: ../
+      dockerfile: ./cmd/loki/Dockerfile
+    container_name: loki
+    networks:
+      loki_iceberg:
+    ports:
+      - 3100:3100
+    command: ["-target=all", "-config.file=/usr/share/loki/config.yaml"]
+    volumes:
+      - "loki:/var/lib/loki"
+      - "./config.yaml:/usr/share/loki/config.yaml"
+      - "./overrides.yaml:/usr/share/loki/overrides.yaml"
+    depends_on:
+      - loki-init
+  alloy:
+    image: grafana/alloy:latest
+    container_name: alloy
+    networks:
+      loki_iceberg:
+    ports:
+      - 12345:12345
+    volumes:
+      - ./alloy.yaml:/etc/alloy/config.alloy
+      - /var/log:/var/log:ro  # Host logs (read-only)
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # For Docker container logs
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+  rest:
+    image: apache/iceberg-rest-fixture
+    container_name: iceberg-rest
+    networks:
+      loki_iceberg:
+    ports:
+      - 8181:8181
+    environment:
+      - AWS_ACCESS_KEY_ID=loki
+      - AWS_SECRET_ACCESS_KEY=pa55word
+      - AWS_REGION=us-east-1
+      - CATALOG_WAREHOUSE=s3://logslake/
+      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - CATALOG_S3_ENDPOINT=http://minio:9000
+  minio:
+    image: minio/minio
+    container_name: minio
+    environment:
+      - MINIO_ROOT_USER=loki
+      - MINIO_ROOT_PASSWORD=pa55word
+      - MINIO_DOMAIN=minio
+    networks:
+      loki_iceberg:
+        aliases:
+          - logslake.minio
+    ports:
+      - 9001:9001
+      - 9000:9000
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - "minio:/data"
+  mc:
+    depends_on:
+      - minio
+    image: minio/mc
+    container_name: mc
+    networks:
+      loki_iceberg:
+    environment:
+      - AWS_ACCESS_KEY_ID=loki
+      - AWS_SECRET_ACCESS_KEY=pa55word
+      - AWS_REGION=us-east-1
+    entrypoint: |
+      /bin/sh -c "
+      until (/usr/bin/mc alias set minio http://minio:9000 loki pa55word) do echo '...waiting...' && sleep 1; done;
+      /usr/bin/mc rm -r --force minio/logslake;
+      /usr/bin/mc rm -r --force minio/loki;
+      /usr/bin/mc mb minio/logslake;
+      /usr/bin/mc mb minio/loki;
+      /usr/bin/mc policy set public minio/logslake;
+      /usr/bin/mc policy set public minio/loki;
+      tail -f /dev/null
+      "
+
+networks:
+  loki_iceberg:
+
+volumes:
+  loki: {}
+  minio: {}

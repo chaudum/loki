@@ -1,0 +1,41 @@
+logging {
+  level = "info"
+  format = "logfmt"
+}
+
+loki.source.file "system_logs" {
+  targets = [
+    {__path__ = "/var/log/syslog", job = "syslog"},
+    {__path__ = "/var/log/auth.log", job = "auth"},
+    {__path__ = "/var/log/devnull.log", job = "devnull"},
+  ]
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.source.docker "docker_logs" {
+  host = "unix:///var/run/docker.sock"
+  targets = []
+  forward_to = [loki.write.local.receiver]
+  relabel_rules = loki.relabel.docker.rules
+}
+
+loki.relabel "docker" {
+  forward_to = []
+  
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label = "container"
+  }
+  
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label = "stream"
+  }
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+    tenant_id = "hackathon"
+  }
+}
