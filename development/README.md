@@ -27,6 +27,6 @@ env/bin/python -m pip install pyiceberg pyarrow
 ```
 
 ```bash
-env/bin/python bootstrap.py
+env/bin/python bootstrap.py create
 iceberg --uri http://localhost:8181 describe table loki.chunks
 ```

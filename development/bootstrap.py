@@ -1,3 +1,4 @@
+import sys
 from pyiceberg.catalog import load_catalog, NoSuchTableError, NoSuchNamespaceError
 from pyiceberg.schema import Schema
 from pyiceberg.table.sorting import SortOrder, SortField
@@ -58,5 +59,18 @@ def setup(uri: str, namespace: str, table_name: str):
 
 
 if __name__ == "__main__":
-    cleanup("http://localhost:8181", "loki", "chunks")
-    setup("http://localhost:8181", "loki", "chunks")
+    uri: str = "http://localhost:8181"
+    namespace: str = "loki"
+    table_name: str = "chunks"
+
+    args = sys.argv[1:]
+    if len(args) > 0:
+        if args[0] == "drop":
+            cleanup(uri, namespace, table_name)
+        elif args[0] == "create":
+            setup(uri, namespace, table_name)
+        else:
+            print("invalid command: ", args[0])
+    else:
+        print("missing argument")
+
