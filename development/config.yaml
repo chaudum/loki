@@ -1,0 +1,86 @@
+auth_enabled: true
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9095
+  log_level: info
+
+common:
+  compactor_address: http://127.0.0.1:3100
+  instance_addr: 127.0.0.1
+  path_prefix: /var/lib/loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+ingester:
+  lifecycler:
+    final_sleep: 0s
+  chunk_idle_period: 5m
+  chunk_retain_period: 30s
+
+ingester_client:
+  remote_timeout: 10s
+
+bloom_build:
+  enabled: true
+  builder:
+    planner_address: localhost:9095
+
+bloom_gateway:
+  enabled: true
+  client:
+    addresses: dnssrv+localhost.local.
+
+schema_config:
+  configs:
+  - from: 2025-01-01
+    schema: v13
+    store: tsdb
+    object_store: s3
+    index:
+      prefix: index_tsdb_
+      period: 24h
+
+index_gateway:
+  mode: ring
+  ring:
+    replication_factor: 1
+
+storage_config:
+  aws:
+    endpoint: http://minio:9000
+    bucketnames: loki
+    region: us-east-1
+    access_key_id: loki
+    secret_access_key: pa55word
+    s3forcepathstyle: true
+    insecure: true
+  tsdb_shipper:
+    active_index_directory: /var/lib/loki/index
+    cache_location: /var/lib/loki/cache
+  bloom_shipper:
+    working_directory: /var/lib/loki/blooms
+
+querier:
+  query_ingesters_within: 10m
+
+frontend:
+  scheduler_address: 127.0.0.1:9095
+frontend_worker:
+  scheduler_address: 127.0.0.1:9095
+
+compactor:
+  delete_request_store: filesystem
+
+runtime_config:
+  file: /usr/share/loki/overrides.yaml
+
+limits_config:
+  allow_structured_metadata: true
+  query_timeout: 1h
+  split_queries_by_interval: 1h
+  ingestion_rate_mb: 100
+  bloom_creation_enabled: false
+  bloom_gateway_enable_filtering: false
