@@ -19,25 +19,27 @@ import (
 )
 
 type Index struct {
-	endpoint string
+	name string
+	uri  string
 }
 
 var _ index.ReaderWriter = &Index{}
 
-func NewIndex() *Index {
+func NewIndex(name, uri string) *Index {
 	return &Index{
-		endpoint: "http://rest:8181",
+		name: name,
+		uri:  uri,
 	}
 }
 
 // IndexChunk implements index.ReaderWriter.
 func (i *Index) IndexChunk(ctx context.Context, from model.Time, through model.Time, chk chunk.Chunk) error {
-	panic("unimplemented")
+	return nil
 }
 
 // GetSeries implements index.Reader.
 func (i *Index) GetSeries(ctx context.Context, userID string, from model.Time, through model.Time, matchers ...*labels.Matcher) ([]labels.Labels, error) {
-	panic("unimplemented")
+	return nil, nil
 }
 
 // GetShards implements index.Reader.
@@ -124,7 +126,7 @@ func (i *Index) GetChunkRefs(ctx context.Context, userID string, from, through m
 
 func (i *Index) getFileScanTasks(ctx context.Context, userID string, from, through model.Time, predicate chunk.Predicate) ([]table.FileScanTask, *table.Table, error) {
 	// Load catalog and table
-	cat, err := catalog.Load(ctx, "logslake", iceberg.Properties{"uri": i.endpoint})
+	cat, err := catalog.Load(ctx, i.name, iceberg.Properties{"uri": i.uri})
 	if err != nil {
 		return nil, nil, err
 	}

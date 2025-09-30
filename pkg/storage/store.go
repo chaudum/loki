@@ -315,7 +315,7 @@ func (s *LokiStore) storeForPeriod(p config.PeriodConfig, tableRange config.Tabl
 	}
 
 	if p.IndexType == types.IcebergType {
-		idx := iceberg.NewIndex()
+		idx := iceberg.NewIndex(s.cfg.Iceberg.CatalogName, s.cfg.Iceberg.CatalogURI)
 
 		chunkWriter := stores.NewChunkWriter(f, s.schemaCfg, idx, s.storeCfg.DisableIndexDeduplication)
 		return chunkWriter, idx,
