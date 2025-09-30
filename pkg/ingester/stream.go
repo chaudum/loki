@@ -360,7 +360,7 @@ func (s *stream) storeEntries(ctx context.Context, entries []logproto.Entry, usa
 		}
 
 		// ------------------ Parquet chunk
-		if err := chunk.parquetChunk.Append(&entries[i]); err != nil {
+		if err := chunk.parquetChunk.Append(s, &entries[i]); err != nil {
 			invalid = append(invalid, entryWithError{&entries[i], err})
 			continue
 		}

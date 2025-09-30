@@ -14,10 +14,17 @@ import (
 	"github.com/parquet-go/parquet-go"
 )
 
+const (
+	LabelServiceName = "service_name"
+	LabelLogLevel    = "detected_level"
+)
+
 type ParquetRow struct {
-	Timestamp time.Time         `parquet:"timestamp,timestamp(millisecond),delta"`
-	Message   string            `parquet:"message,zstd"`
-	Metadata  map[string]string `parquet:"metadata"`
+	Timestamp   time.Time         `parquet:"timestamp,timestamp(millisecond),delta"`
+	Message     string            `parquet:"message,zstd"`
+	ServiceName string            `parquet:"service_name,zstd"`
+	LogLevel    string            `parquet:"detected_level,zstd"`
+	Metadata    map[string]string `parquet:"metadata"`
 }
 
 func NewParquetChunk(size int) *ParquetChunk {
@@ -38,15 +45,32 @@ func (pc *ParquetChunk) hasSpaceFor(entry *logproto.Entry) bool {
 	return pc.data.Len() < maxSize
 }
 
-func (pc *ParquetChunk) Append(entry *logproto.Entry) error {
+func (pc *ParquetChunk) Append(s *stream, entry *logproto.Entry) error {
+	serviceName, logLevel := "undefined", "undefined"
+	if v := s.labels.Get(LabelServiceName); v != "" {
+		serviceName = v
+	}
+	if v := s.labels.Get(LabelLogLevel); v != "" {
+		logLevel = v
+	}
+
 	metadata := make(map[string]string, len(entry.StructuredMetadata))
 	for _, lbl := range entry.StructuredMetadata {
 		metadata[lbl.Name] = lbl.Value
+		switch lbl.Name {
+		case LabelServiceName:
+			serviceName = lbl.Value
+		case LabelLogLevel:
+			logLevel = lbl.Value
+		}
 	}
+
 	row := ParquetRow{
-		Timestamp: entry.Timestamp,
-		Message:   entry.Line,
-		Metadata:  metadata,
+		Timestamp:   entry.Timestamp,
+		Message:     entry.Line,
+		ServiceName: serviceName,
+		LogLevel:    logLevel,
+		Metadata:    metadata,
 	}
 	_, err := pc.w.Write([]ParquetRow{row})
 	return err

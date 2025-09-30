@@ -19,8 +19,6 @@ ingester:
     final_sleep: 0s
   chunk_idle_period: 5m
   chunk_retain_period: 30s
-  iceberg_catalog_uri: http://localhost:8181
-  iceberg_catalog_name: logslake
 
 ingester_client:
   remote_timeout: 10s
@@ -51,6 +49,9 @@ index_gateway:
     replication_factor: 1
 
 storage_config:
+  iceberg:
+    catalog_uri: http://localhost:8181
+    catalog_name: logslake
   aws:
     endpoint: http://localhost:9000
     bucketnames: loki
