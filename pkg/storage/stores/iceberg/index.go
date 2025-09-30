@@ -25,7 +25,7 @@ var _ index.ReaderWriter = &Index{}
 
 func NewIndex() *Index {
 	return &Index{
-		endpoint: "http://localhost:8181",
+		endpoint: "http://rest:8181",
 	}
 }
 
