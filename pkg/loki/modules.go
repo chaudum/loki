@@ -744,6 +744,7 @@ func (t *Loki) initIngester() (_ services.Service, err error) {
 		level.Warn(util_log.Logger).Log("msg", "The config setting shutdown marker path is not set. The /ingester/prepare_shutdown endpoint won't work")
 	}
 
+	t.Cfg.Ingester.Iceberg = t.Cfg.StorageConfig.Iceberg
 	t.Ingester, err = ingester.New(t.Cfg.Ingester, t.Cfg.IngesterClient, t.Store, t.Overrides, t.tenantConfigs, prometheus.DefaultRegisterer, t.Cfg.Distributor.WriteFailuresLogging, t.Cfg.MetricsNamespace, logger, t.UsageTracker, t.ring, t.PartitionRingWatcher)
 	if err != nil {
 		return
@@ -892,8 +893,8 @@ func (t *Loki) initTableManager() (services.Service, error) {
 }
 
 func (t *Loki) initStore() (services.Service, error) {
-	catalog.Register("logslake", catalog.RegistrarFunc(func(ctx context.Context, s string, p iceberg.Properties) (catalog.Catalog, error) {
-		return rest.NewCatalog(ctx, s, "http://rest:8181")
+	catalog.Register(t.Cfg.StorageConfig.Iceberg.CatalogName, catalog.RegistrarFunc(func(ctx context.Context, s string, p iceberg.Properties) (catalog.Catalog, error) {
+		return rest.NewCatalog(ctx, s, t.Cfg.StorageConfig.Iceberg.CatalogURI)
 	}))
 
 	// Set configs pertaining to object storage based indices

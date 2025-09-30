@@ -158,25 +158,27 @@ func (r *ingesterRecoverer) SetStream(ctx context.Context, userID string, series
 }
 
 func (r *ingesterRecoverer) Push(userID string, entries wal.RefEntries) error {
-	return r.ing.replayController.WithBackPressure(func() error {
-		out, ok := r.users.Load(userID)
-		if !ok {
-			return fmt.Errorf("user (%s) not set during WAL replay", userID)
-		}
+	// TODO(chaudum): Implement recovery
+	return nil
+	// return r.ing.replayController.WithBackPressure(func() error {
+	// 	out, ok := r.users.Load(userID)
+	// 	if !ok {
+	// 		return fmt.Errorf("user (%s) not set during WAL replay", userID)
+	// 	}
 
-		s, ok := out.(*sync.Map).Load(entries.Ref)
-		if !ok {
-			return fmt.Errorf("stream (%d) not set during WAL replay for user (%s)", entries.Ref, userID)
-		}
+	// 	s, ok := out.(*sync.Map).Load(entries.Ref)
+	// 	if !ok {
+	// 		return fmt.Errorf("stream (%d) not set during WAL replay for user (%s)", entries.Ref, userID)
+	// 	}
 
-		// ignore out of order errors here (it's possible for a checkpoint to already have data from the wal segments)
-		bytesAdded, err := s.(*stream).Push(context.Background(), entries.Entries, nil, entries.Counter, true, false, r.ing.customStreamsTracker, "loki")
-		r.ing.replayController.Add(int64(bytesAdded))
-		if err != nil && err == ErrEntriesExist {
-			r.ing.metrics.duplicateEntriesTotal.Add(float64(len(entries.Entries)))
-		}
-		return nil
-	})
+	// 	// ignore out of order errors here (it's possible for a checkpoint to already have data from the wal segments)
+	// 	bytesAdded, err := s.(*stream).Push(context.Background(), entries.Entries, nil, entries.Counter, true, false, r.ing.customStreamsTracker, "loki")
+	// 	r.ing.replayController.Add(int64(bytesAdded))
+	// 	if err != nil && err == ErrEntriesExist {
+	// 		r.ing.metrics.duplicateEntriesTotal.Add(float64(len(entries.Entries)))
+	// 	}
+	// 	return nil
+	// })
 }
 
 func (r *ingesterRecoverer) Close() {
@@ -211,7 +213,7 @@ func (r *ingesterRecoverer) Close() {
 			s.unorderedWrites = isAllowed
 
 			if !isAllowed && old {
-				err := s.chunks[len(s.chunks)-1].chunk.ConvertHead(headBlockType(s.chunkFormat, isAllowed))
+				err := s.chunks[len(s.chunks)-1].memChunk.ConvertHead(headBlockType(s.chunkFormat, isAllowed))
 				if err != nil {
 					level.Warn(r.logger).Log(
 						"msg", "error converting headblock",

@@ -60,8 +60,8 @@ func toWireChunks(descs []chunkDesc, wireChunks []chunkWithBuffer) ([]chunkWithB
 	}
 
 	for i, d := range descs {
-		from, to := d.chunk.Bounds()
-		chunkSize, headSize := d.chunk.CheckpointSize()
+		from, to := d.memChunk.Bounds()
+		chunkSize, headSize := d.memChunk.CheckpointSize()
 
 		wireChunk := chunkWithBuffer{
 			Chunk: Chunk{
@@ -76,7 +76,7 @@ func toWireChunks(descs []chunkDesc, wireChunks []chunkWithBuffer) ([]chunkWithB
 			head:   headBufferPool.Get(headSize),
 		}
 
-		err := d.chunk.SerializeForCheckpointTo(
+		err := d.memChunk.SerializeForCheckpointTo(
 			wireChunk.blocks,
 			wireChunk.head,
 		)
@@ -105,7 +105,8 @@ func fromWireChunks(conf *Config, headfmt chunkenc.HeadBlockFmt, wireChunks []Ch
 		if err != nil {
 			return nil, err
 		}
-		desc.chunk = mc
+		desc.memChunk = mc
+		desc.parquetChunk = NewParquetChunk(4 << 20) // TODO
 
 		descs = append(descs, desc)
 	}

@@ -125,15 +125,13 @@ type Config struct {
 	// Optional wrapper that can be used to modify the behaviour of the ingester
 	Wrapper Wrapper `yaml:"-"`
 
-	IndexShards int `yaml:"index_shards"`
-
-	MaxDroppedStreams int `yaml:"max_dropped_streams"`
-
-	ShutdownMarkerPath string `yaml:"shutdown_marker_path"`
-
+	IndexShards               int           `yaml:"index_shards"`
+	MaxDroppedStreams         int           `yaml:"max_dropped_streams"`
+	ShutdownMarkerPath        string        `yaml:"shutdown_marker_path"`
 	OwnedStreamsCheckInterval time.Duration `yaml:"owned_streams_check_interval" doc:"description=Interval at which the ingester ownedStreamService checks for changes in the ring to recalculate owned streams."`
 
-	KafkaIngestion KafkaIngestionConfig `yaml:"kafka_ingestion,omitempty"`
+	KafkaIngestion KafkaIngestionConfig  `yaml:"kafka_ingestion,omitempty"`
+	Iceberg        storage.IcebergConfig `yaml:"-"` // Will be populated from [storage.Config]
 }
 
 // RegisterFlags registers the flags.
@@ -209,6 +207,7 @@ type Wrapper interface {
 
 // Store is the store interface we need on the ingester.
 type Store interface {
+	stores.ParquetWriter
 	stores.ChunkWriter
 	stores.ChunkFetcher
 	storage.SelectStore
@@ -252,6 +251,7 @@ type Ingester struct {
 
 	store           Store
 	periodicConfigs []config.PeriodConfig
+	storageCfg      storage.Config
 
 	loopDone    sync.WaitGroup
 	loopQuit    chan struct{}

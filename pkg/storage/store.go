@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"time"
 
@@ -396,6 +397,11 @@ func injectShardLabel(shards []string, matchers []*labels.Matcher) ([]*labels.Ma
 		}
 	}
 	return matchers, nil
+}
+
+func (s *LokiStore) PutParquet(ctx context.Context, chunks []io.Reader) error {
+	level.Info(s.logger).Log("msg", "PutParquet()", "chunks", len(chunks))
+	return nil
 }
 
 func (s *LokiStore) SetChunkFilterer(chunkFilterer chunk.RequestChunkFilterer) {

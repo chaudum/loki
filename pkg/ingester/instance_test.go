@@ -281,13 +281,13 @@ func TestSyncPeriod(t *testing.T) {
 
 	// make sure each chunk spans max 'sync period' time
 	for _, c := range s.chunks {
-		start, end := c.chunk.Bounds()
+		start, end := c.memChunk.Bounds()
 		span := end.Sub(start)
 
 		const format = "15:04:05.000"
-		t.Log(start.Format(format), "--", end.Format(format), span, c.chunk.Utilization())
+		t.Log(start.Format(format), "--", end.Format(format), span, c.memChunk.Utilization())
 
-		require.True(t, span < syncPeriod || c.chunk.Utilization() >= minUtil)
+		require.True(t, span < syncPeriod || c.memChunk.Utilization() >= minUtil)
 	}
 }
 
@@ -322,13 +322,13 @@ func setupTestStreams(t *testing.T) (*instance, time.Time, int) {
 		require.NoError(t, err)
 		chunkfmt, headfmt, err := instance.chunkFormatAt(minTs(&testStream))
 		require.NoError(t, err)
-		chunk := newStream(chunkfmt, headfmt, cfg, limiter.rateLimitStrategy, "fake", 0, labels.EmptyLabels(), true, NewStreamRateCalculator(), NilMetrics, nil, nil, retentionHours, stream.policy).NewChunk()
+		chunk := newStream(chunkfmt, headfmt, cfg, limiter.rateLimitStrategy, "fake", 0, labels.EmptyLabels(), true, NewStreamRateCalculator(), NilMetrics, nil, nil, retentionHours, stream.policy).NewMemChunk()
 		for _, entry := range testStream.Entries {
 			dup, err := chunk.Append(&entry)
 			require.False(t, dup)
 			require.NoError(t, err)
 		}
-		stream.chunks = append(stream.chunks, chunkDesc{chunk: chunk})
+		stream.chunks = append(stream.chunks, chunkDesc{memChunk: chunk})
 	}
 
 	return instance, currentTime, indexShards

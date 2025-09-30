@@ -2,6 +2,7 @@ package stores
 
 import (
 	"context"
+	"io"
 	"sort"
 
 	"github.com/prometheus/common/model"
@@ -17,6 +18,10 @@ import (
 	"github.com/grafana/loki/v3/pkg/storage/stores/shipper/indexshipper/tsdb/sharding"
 	"github.com/grafana/loki/v3/pkg/util"
 )
+
+type ParquetWriter interface {
+	PutParquet(ctx context.Context, chunks []io.Reader) error
+}
 
 type ChunkWriter interface {
 	Put(ctx context.Context, chunks []chunk.Chunk) error

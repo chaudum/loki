@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/grafana/dskit/backoff"
+	"github.com/grafana/dskit/multierror"
 	"github.com/grafana/dskit/ring"
 	"github.com/grafana/dskit/tenant"
 	"github.com/grafana/dskit/user"
@@ -193,7 +195,7 @@ func (i *Ingester) sweepStream(instance *instance, stream *stream, immediate boo
 	}
 
 	flushQueueIndex := int(uint64(stream.fp) % uint64(i.cfg.ConcurrentFlushes))
-	firstTime, _ := stream.chunks[0].chunk.Bounds()
+	firstTime, _ := stream.chunks[0].memChunk.Bounds()
 	i.flushQueues[flushQueueIndex].Enqueue(&flushOp{
 		model.TimeFromUnixNano(firstTime.UnixNano()), instance.instanceID,
 		stream.fp, immediate,
@@ -282,8 +284,8 @@ func (i *Ingester) flushUserSeries(ctx context.Context, userID string, fp model.
 	totalUncompressedSize := 0
 	frc := flushReasonCounter{}
 	for _, c := range chunks {
-		totalCompressedSize += c.chunk.CompressedSize()
-		totalUncompressedSize += c.chunk.UncompressedSize()
+		totalCompressedSize += c.memChunk.CompressedSize()
+		totalUncompressedSize += c.memChunk.UncompressedSize()
 		err := frc.IncrementForReason(c.reason)
 		if err != nil {
 			level.Error(i.logger).Log("msg", "error incrementing flush reason", "err", err)
@@ -368,7 +370,7 @@ func (i *Ingester) shouldFlushChunk(chunk *chunkDesc) (bool, string) {
 		return true, flushReasonIdle
 	}
 
-	if from, to := chunk.chunk.Bounds(); to.Sub(from) > i.cfg.MaxChunkAge {
+	if from, to := chunk.memChunk.Bounds(); to.Sub(from) > i.cfg.MaxChunkAge {
 		return true, flushReasonMaxAge
 	}
 
@@ -387,8 +389,9 @@ func (i *Ingester) removeFlushedChunks(instance *instance, stream *stream, mayRe
 			break
 		}
 
-		subtracted += stream.chunks[0].chunk.UncompressedSize()
-		stream.chunks[0].chunk = nil // erase reference so the chunk can be garbage-collected
+		subtracted += stream.chunks[0].memChunk.UncompressedSize()
+		stream.chunks[0].memChunk = nil     // erase reference so the chunk can be garbage-collected
+		stream.chunks[0].parquetChunk = nil // erase reference so the chunk can be garbage-collected
 		stream.chunks = stream.chunks[1:]
 	}
 	i.metrics.memoryChunks.Sub(float64(prevNumChunks - len(stream.chunks)))
@@ -435,10 +438,10 @@ func (i *Ingester) flushChunks(ctx context.Context, fp model.Fingerprint, labelP
 			return fmt.Errorf("chunk close for flushing: %w", err)
 		}
 
-		firstTime, lastTime := util.RoundToMilliseconds(c.chunk.Bounds())
+		firstTime, lastTime := util.RoundToMilliseconds(c.memChunk.Bounds())
 		ch := chunk.NewChunk(
 			userID, fp, metric,
-			chunkenc.NewFacade(c.chunk, i.cfg.BlockSize, i.cfg.TargetChunkSize),
+			chunkenc.NewFacade(c.memChunk, i.cfg.BlockSize, i.cfg.TargetChunkSize),
 			firstTime,
 			lastTime,
 		)
@@ -458,6 +461,10 @@ func (i *Ingester) flushChunks(ctx context.Context, fp model.Fingerprint, labelP
 
 			return c.reason
 		}()
+
+		if err := i.flushParquetChunk(ctx, c.parquetChunk); err != nil {
+			return err
+		}
 
 		i.reportFlushedChunkStatistics(&ch, c, sizePerTenant, countPerTenant, reason)
 		i.markChunkAsFlushed(cs[j], chunkMtx)
@@ -480,7 +487,14 @@ func (i *Ingester) closeChunk(desc *chunkDesc, chunkMtx sync.Locker) error {
 	chunkMtx.Lock()
 	defer chunkMtx.Unlock()
 
-	return desc.chunk.Close()
+	var errs multierror.MultiError
+	if err := desc.memChunk.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := desc.parquetChunk.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	return errs.Err()
 }
 
 // encodeChunk encodes a chunk.Chunk based on the given chunkDesc.
@@ -492,7 +506,7 @@ func (i *Ingester) encodeChunk(ctx context.Context, ch *chunk.Chunk, desc *chunk
 		return err
 	}
 	start := time.Now()
-	chunkBytesSize := desc.chunk.BytesSize() + 4*1024 // size + 4kB should be enough room for cortex header
+	chunkBytesSize := desc.memChunk.BytesSize() + 4*1024 // size + 4kB should be enough room for cortex header
 	if err := ch.EncodeTo(bytes.NewBuffer(make([]byte, 0, chunkBytesSize)), i.logger); err != nil {
 		if !errors.Is(err, chunk.ErrChunkDecode) {
 			return fmt.Errorf("chunk encoding: %w", err)
@@ -512,15 +526,46 @@ func (i *Ingester) encodeChunk(ctx context.Context, ch *chunk.Chunk, desc *chunk
 // chunk to have another opportunity to be flushed.
 func (i *Ingester) flushChunk(ctx context.Context, ch *chunk.Chunk) error {
 	i.metrics.chunksFlushRequestsTotal.Inc()
+
 	if err := i.store.Put(ctx, []chunk.Chunk{*ch}); err != nil {
 		i.metrics.chunksFlushFailures.Inc()
-		return fmt.Errorf("store put chunk: %w", err)
+		return fmt.Errorf("store put loki chunk: %w", err)
 	}
 	i.metrics.flushedChunksStats.Inc(1)
 	return nil
 
-	// key := config.ExternalKey(ch.ChunkRef, i.store.GetSchemaConfigs())
-	// return registerFile(ctx, key)
+}
+
+func (i *Ingester) flushParquetChunk(ctx context.Context, chunk *ParquetChunk) error {
+	if err := i.store.PutParquet(ctx, []io.Reader{chunk.Reader()}); err != nil {
+		return fmt.Errorf("store put parquet chunk: %w", err)
+	}
+
+	cat, err := catalog.Load(ctx, i.cfg.Iceberg.CatalogName, iceberg.Properties{"uri": i.cfg.Iceberg.CatalogURI})
+	if err != nil {
+		return err
+	}
+
+	rr, err := chunk.RecordReader(ctx)
+	if err != nil {
+		return err
+	}
+
+	tbl, err := cat.LoadTable(ctx, table.Identifier{"loki", "chunks"})
+	if err != nil {
+		return err
+	}
+
+	txn := tbl.NewTransaction()
+
+	err = txn.Append(ctx, rr, tbl.Properties())
+	if err != nil {
+		return err
+	}
+	_, err = txn.Commit(ctx)
+
+	return err
+
 }
 
 // reportFlushedChunkStatistics calculate overall statistics of flushed chunks without compromising the flush process.
@@ -542,13 +587,13 @@ func (i *Ingester) reportFlushedChunkStatistics(ch *chunk.Chunk, desc *chunkDesc
 
 	utilization := ch.Data.Utilization()
 	i.metrics.chunkUtilization.Observe(utilization)
-	numEntries := desc.chunk.Size()
+	numEntries := desc.memChunk.Size()
 	i.metrics.chunkEntries.Observe(float64(numEntries))
 	i.metrics.chunkSize.Observe(compressedSize)
 	sizePerTenant.Add(compressedSize)
 	countPerTenant.Inc()
 
-	boundsFrom, boundsTo := desc.chunk.Bounds()
+	boundsFrom, boundsTo := desc.memChunk.Bounds()
 	i.metrics.chunkAge.Observe(time.Since(boundsFrom).Seconds())
 	i.metrics.chunkLifespan.Observe(boundsTo.Sub(boundsFrom).Hours())
 
@@ -557,26 +602,4 @@ func (i *Ingester) reportFlushedChunkStatistics(ch *chunk.Chunk, desc *chunkDesc
 	i.metrics.flushedChunksUtilizationStats.Record(utilization)
 	i.metrics.flushedChunksAgeStats.Record(time.Since(boundsFrom).Seconds())
 	i.metrics.flushedChunksLifespanStats.Record(boundsTo.Sub(boundsFrom).Seconds())
-}
-
-func registerFile(ctx context.Context, path string) error {
-	// Load catalog and table
-	cat, err := catalog.Load(ctx, "logslake", iceberg.Properties{"uri": "http://localhost:8181"})
-	if err != nil {
-		return err
-	}
-
-	tbl, err := cat.LoadTable(ctx, table.Identifier{"loki", "chunks"})
-	if err != nil {
-		return err
-	}
-
-	// Create transaction to add files
-	txn := tbl.NewTransaction()
-
-	txn.AddFiles(ctx, []string{path}, tbl.CurrentSnapshot().Summary.Properties, true)
-
-	// Commit transaction
-	_, err = txn.Commit(ctx)
-	return err
 }

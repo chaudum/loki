@@ -194,35 +194,6 @@ func newInstance(
 	return i, err
 }
 
-// consumeChunk manually adds a chunk that was received during ingester chunk
-// transfer.
-func (i *instance) consumeChunk(ctx context.Context, ls labels.Labels, chunk *logproto.Chunk) error {
-	fp := i.getHashForLabels(ls)
-
-	s, _, _ := i.streams.LoadOrStoreNewByFP(fp,
-		func() (*stream, error) {
-			s, err := i.createStreamByFP(ls, fp)
-			s.chunkMtx.Lock() // Lock before return, because we have defer that unlocks it.
-			if err != nil {
-				return nil, err
-			}
-			return s, nil
-		},
-		func(s *stream) error {
-			s.chunkMtx.Lock()
-			return nil
-		},
-	)
-	defer s.chunkMtx.Unlock()
-
-	err := s.consumeChunk(ctx, chunk)
-	if err == nil {
-		i.metrics.memoryChunks.Inc()
-	}
-
-	return err
-}
-
 // Push will iterate over the given streams present in the PushRequest and attempt to store them.
 //
 // Although multiple streams are part of the PushRequest, the returned error only reflects what
@@ -257,6 +228,7 @@ func (i *instance) Push(ctx context.Context, req *logproto.PushRequest) error {
 			continue
 		}
 
+		level.Warn(util_log.Logger).Log("msg", "push to stream", "stream", s.labels.String(), "chunks", len(s.chunks))
 		_, appendErr = s.Push(ctx, reqStream.Entries, record, 0, false, rateLimitWholeStream, i.customStreamsTracker, req.Format)
 		s.chunkMtx.Unlock()
 	}
@@ -803,14 +775,14 @@ func (i *instance) getStats(ctx context.Context, req *logproto.IndexStatsRequest
 				// and haven't been flushed.
 				// Flushed chunks will already be counted
 				// by the TSDB manager+shipper
-				chkFrom, chkThrough := chk.chunk.Bounds()
+				chkFrom, chkThrough := chk.memChunk.Bounds()
 
 				if chk.flushed.IsZero() && from.Before(chkThrough) && through.After(chkFrom) {
 					hasChunkOverlap = true
 					res.Chunks++
 					factor := util.GetFactorOfTime(from.UnixNano(), through.UnixNano(), chkFrom.UnixNano(), chkThrough.UnixNano())
-					res.Entries += uint64(factor * float64(chk.chunk.Size()))
-					res.Bytes += uint64(factor * float64(chk.chunk.UncompressedSize()))
+					res.Entries += uint64(factor * float64(chk.memChunk.Size()))
+					res.Bytes += uint64(factor * float64(chk.memChunk.UncompressedSize()))
 				}
 
 			}
@@ -873,11 +845,11 @@ func (i *instance) getVolume(ctx context.Context, req *logproto.VolumeRequest) (
 				// and haven't been flushed.
 				// Flushed chunks will already be counted
 				// by the TSDB manager+shipper
-				chkFrom, chkThrough := chk.chunk.Bounds()
+				chkFrom, chkThrough := chk.memChunk.Bounds()
 
 				if chk.flushed.IsZero() && from.Before(chkThrough) && through.After(chkFrom) {
 					factor := util.GetFactorOfTime(from.UnixNano(), through.UnixNano(), chkFrom.UnixNano(), chkThrough.UnixNano())
-					size += uint64(float64(chk.chunk.UncompressedSize()) * factor)
+					size += uint64(float64(chk.memChunk.UncompressedSize()) * factor)
 				}
 			}
 
