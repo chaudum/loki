@@ -125,18 +125,22 @@ func (i *Index) getFileScanTasks(ctx context.Context, userID string, from, throu
 	// Load catalog and table
 	cat, err := catalog.Load(ctx, "logslake", iceberg.Properties{"uri": i.endpoint})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	tbl, err := cat.LoadTable(ctx, table.Identifier{"loki", "chunks"})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	opts := make([]table.ScanOption, 0)
 	// TODO: select chunks by predicate
 
 	scan := tbl.Scan(opts...)
+	tasks, err := scan.PlanFiles(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 
-	return scan.PlanFiles(ctx), tbl, nil
+	return tasks, tbl, nil
 }
