@@ -37,7 +37,7 @@ schema_config:
   configs:
   - from: 2025-01-01
     schema: v13
-    store: tsdb
+    store: iceberg 
     object_store: s3
     index:
       prefix: index_tsdb_

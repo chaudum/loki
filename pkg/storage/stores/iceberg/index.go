@@ -2,6 +2,8 @@ package iceberg
 
 import (
 	"context"
+	"fmt"
+	"sort"
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
@@ -39,7 +41,37 @@ func (i *Index) GetSeries(ctx context.Context, userID string, from model.Time, t
 
 // GetShards implements index.Reader.
 func (i *Index) GetShards(ctx context.Context, userID string, from model.Time, through model.Time, targetBytesPerShard uint64, predicate chunk.Predicate) (*logproto.ShardsResponse, error) {
-	panic("unimplemented")
+	tasks, tbl, err := i.getFileScanTasks(ctx, userID, from, through, predicate)
+	if err != nil {
+		return nil, err
+	}
+
+	field, ok := tbl.Schema().FindFieldByName("message")
+	if !ok {
+		return nil, fmt.Errorf("message field not found")
+	}
+
+	resp := &logproto.ShardsResponse{}
+
+	series := sharding.SizedFPs(sharding.SizedFPsPool.Get(len(tasks)))
+	defer sharding.SizedFPsPool.Put(series)
+
+	for _, task := range tasks {
+		c, err := chunk.ParseExternalKey(userID, task.File.FilePath())
+		if err != nil {
+			return nil, err
+		}
+
+		x := sharding.SizedFP{Fp: model.Fingerprint(c.Fingerprint)}
+		x.Stats.Entries += uint64(task.File.DistinctValueCounts()[field.ID])
+		x.Stats.Chunks = uint64(task.File.FileSizeBytes())
+		series = append(series, x)
+	}
+
+	sort.Sort(series)
+	resp.Shards = series.ShardsFor(targetBytesPerShard)
+
+	return resp, nil
 }
 
 // HasForSeries implements index.Reader.
@@ -73,6 +105,23 @@ func (i *Index) Volume(ctx context.Context, userID string, from model.Time, thro
 }
 
 func (i *Index) GetChunkRefs(ctx context.Context, userID string, from, through model.Time, predicate chunk.Predicate) ([]logproto.ChunkRef, error) {
+	tasks, _, err := i.getFileScanTasks(ctx, userID, from, through, predicate)
+	if err != nil {
+		return nil, err
+	}
+
+	chunkRefs := make([]logproto.ChunkRef, 0, len(tasks))
+	for _, task := range tasks {
+		c, err := chunk.ParseExternalKey(userID, task.File.FilePath())
+		if err != nil {
+			return nil, err
+		}
+		chunkRefs = append(chunkRefs, c.ChunkRef)
+	}
+	return chunkRefs, nil
+}
+
+func (i *Index) getFileScanTasks(ctx context.Context, userID string, from, through model.Time, predicate chunk.Predicate) ([]table.FileScanTask, *table.Table, error) {
 	// Load catalog and table
 	cat, err := catalog.Load(ctx, "logslake", iceberg.Properties{"uri": i.endpoint})
 	if err != nil {
@@ -89,18 +138,5 @@ func (i *Index) GetChunkRefs(ctx context.Context, userID string, from, through m
 
 	scan := tbl.Scan(opts...)
 
-	tasks, err := scan.PlanFiles(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	chunkRefs := make([]logproto.ChunkRef, 0, len(tasks))
-	for _, task := range tasks {
-		c, err := chunk.ParseExternalKey(userID, task.File.FilePath())
-		if err != nil {
-			return nil, err
-		}
-		chunkRefs = append(chunkRefs, c.ChunkRef)
-	}
-	return chunkRefs, nil
+	return scan.PlanFiles(ctx), tbl, nil
 }
