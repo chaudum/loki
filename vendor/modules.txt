@@ -407,6 +407,7 @@ github.com/apache/arrow-go/v18/parquet/variant
 ## explicit; go 1.24.0
 github.com/apache/iceberg-go
 github.com/apache/iceberg-go/catalog
+github.com/apache/iceberg-go/catalog/rest
 github.com/apache/iceberg-go/config
 github.com/apache/iceberg-go/internal
 github.com/apache/iceberg-go/io

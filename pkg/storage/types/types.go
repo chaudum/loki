@@ -3,6 +3,7 @@ package types //nolint:revive
 var SupportedIndexTypes = []string{
 	BoltDBShipperType,
 	TSDBType,
+	IcebergType,
 }
 
 var DeprecatedIndexTypes = []string{
@@ -70,4 +71,5 @@ const (
 
 	BoltDBShipperType = "boltdb-shipper"
 	TSDBType          = "tsdb"
+	IcebergType       = "iceberg"
 )

@@ -16,6 +16,9 @@ import (
 	"time"
 
 	"github.com/NYTimes/gziphandler"
+	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/catalog"
+	"github.com/apache/iceberg-go/catalog/rest"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/grafana/dskit/dns"
@@ -889,6 +892,10 @@ func (t *Loki) initTableManager() (services.Service, error) {
 }
 
 func (t *Loki) initStore() (services.Service, error) {
+	catalog.Register("logslake", catalog.RegistrarFunc(func(ctx context.Context, s string, p iceberg.Properties) (catalog.Catalog, error) {
+		return rest.NewCatalog(ctx, s, "http://rest:8181")
+	}))
+
 	// Set configs pertaining to object storage based indices
 	if config.UsingObjectStorageIndex(t.Cfg.SchemaConfig.Configs) {
 		t.updateConfigForShipperStore()
