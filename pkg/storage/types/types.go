@@ -70,4 +70,5 @@ const (
 
 	BoltDBShipperType = "boltdb-shipper"
 	TSDBType          = "tsdb"
+	IcebergType       = "iceberg"
 )

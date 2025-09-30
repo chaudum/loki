@@ -15,16 +15,21 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 )
 
-type Index struct{
+type Index struct {
 	endpoint string
 }
 
-var _ index.Reader = &Index{}
+var _ index.ReaderWriter = &Index{}
 
 func NewIndex() *Index {
 	return &Index{
 		endpoint: "http://localhost:8181",
 	}
+}
+
+// IndexChunk implements index.ReaderWriter.
+func (i *Index) IndexChunk(ctx context.Context, from model.Time, through model.Time, chk chunk.Chunk) error {
+	panic("unimplemented")
 }
 
 // GetSeries implements index.Reader.

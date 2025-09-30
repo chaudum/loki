@@ -36,6 +36,7 @@ import (
 	"github.com/grafana/loki/v3/pkg/storage/chunk/fetcher"
 	"github.com/grafana/loki/v3/pkg/storage/config"
 	"github.com/grafana/loki/v3/pkg/storage/stores"
+	"github.com/grafana/loki/v3/pkg/storage/stores/iceberg"
 	"github.com/grafana/loki/v3/pkg/storage/stores/index"
 	"github.com/grafana/loki/v3/pkg/storage/stores/series"
 	series_index "github.com/grafana/loki/v3/pkg/storage/stores/series/index"
@@ -309,6 +310,16 @@ func (s *LokiStore) storeForPeriod(p config.PeriodConfig, tableRange config.Tabl
 				chunkClient.Stop()
 				stopTSDBStoreFunc()
 				objectClient.Stop()
+			}, nil
+	}
+
+	if p.IndexType == types.IcebergType {
+		idx := iceberg.NewIndex()
+
+		chunkWriter := stores.NewChunkWriter(f, s.schemaCfg, idx, s.storeCfg.DisableIndexDeduplication)
+		return chunkWriter, idx,
+			func() {
+				f.Stop()
 			}, nil
 	}
 
