@@ -144,7 +144,7 @@ func TestPushDeduplication(t *testing.T) {
 	}, recordPool.GetRecord(), 0, true, false, nil, "loki")
 	require.NoError(t, err)
 	require.Len(t, s.chunks, 1)
-	require.Equal(t, s.chunks[0].chunk.Size(), 2,
+	require.Equal(t, s.chunks[0].memChunk.Size(), 2,
 		"expected exact duplicate to be dropped and newer content with same timestamp to be appended")
 	require.Equal(t, len("test"+"newer, better test"), written)
 }
@@ -210,7 +210,7 @@ func TestPushDeduplicationExtraMetrics(t *testing.T) {
 	}, recordPool.GetRecord(), 0, true, false, nil, "loki")
 	require.NoError(t, err)
 	require.Len(t, s.chunks, 1)
-	require.Equal(t, 2, s.chunks[0].chunk.Size(), "expected exact duplicate to be dropped and newer content with same timestamp to be appended")
+	require.Equal(t, 2, s.chunks[0].memChunk.Size(), "expected exact duplicate to be dropped and newer content with same timestamp to be appended")
 	require.Equal(t, float64(4), testutil.ToFloat64(metrics.duplicateLogBytesTotal.WithLabelValues("fake")))
 
 	content := buf.String()
@@ -251,7 +251,7 @@ func TestPushRejectOldCounter(t *testing.T) {
 	}, recordPool.GetRecord(), 0, true, false, nil, "loki")
 	require.NoError(t, err)
 	require.Len(t, s.chunks, 1)
-	require.Equal(t, s.chunks[0].chunk.Size(), 2,
+	require.Equal(t, s.chunks[0].memChunk.Size(), 2,
 		"expected exact duplicate to be dropped and newer content with same timestamp to be appended")
 
 	// fail to push with a counter <= the streams internal counter
@@ -295,7 +295,7 @@ func TestStreamIterator(t *testing.T) {
 					require.False(t, dup)
 					require.NoError(t, err)
 				}
-				s.chunks = append(s.chunks, chunkDesc{chunk: chunk})
+				s.chunks = append(s.chunks, chunkDesc{memChunk: chunk})
 			}
 
 			for i := 0; i < 100; i++ {

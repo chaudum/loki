@@ -582,7 +582,7 @@ func buildChunks(t testing.TB, size int) []Chunk {
 		c := chunkenc.NewMemChunk(chunkenc.ChunkFormatV3, compression.GZIP, chunkenc.UnorderedHeadBlockFmt, 256*1024, 1500*1024)
 		fillChunk(t, c)
 		descs = append(descs, chunkDesc{
-			chunk: c,
+			memChunk: c,
 		})
 	}
 

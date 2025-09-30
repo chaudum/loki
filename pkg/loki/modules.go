@@ -892,8 +892,9 @@ func (t *Loki) initTableManager() (services.Service, error) {
 }
 
 func (t *Loki) initStore() (services.Service, error) {
-	catalog.Register("logslake", catalog.RegistrarFunc(func(ctx context.Context, s string, p iceberg.Properties) (catalog.Catalog, error) {
-		return rest.NewCatalog(ctx, s, "http://rest:8181")
+
+	catalog.Register(t.Cfg.Ingester.CatalogName, catalog.RegistrarFunc(func(ctx context.Context, s string, p iceberg.Properties) (catalog.Catalog, error) {
+		return rest.NewCatalog(ctx, s, t.Cfg.Ingester.CatalogURI)
 	}))
 
 	// Set configs pertaining to object storage based indices

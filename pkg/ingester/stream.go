@@ -89,7 +89,9 @@ type stream struct {
 }
 
 type chunkDesc struct {
-	chunk   *chunkenc.MemChunk
+	memChunk     *chunkenc.MemChunk
+	parquetChunk *ParquetChunk
+
 	closed  bool
 	synced  bool
 	flushed time.Time
@@ -144,23 +146,6 @@ func newStream(
 	}
 }
 
-// consumeChunk manually adds a chunk to the stream that was received during
-// ingester chunk transfer.
-// Must hold chunkMtx
-// DEPRECATED: chunk transfers are no longer suggested and remain for compatibility.
-func (s *stream) consumeChunk(_ context.Context, chunk *logproto.Chunk) error {
-	c, err := chunkenc.NewByteChunk(chunk.Data, s.cfg.BlockSize, s.cfg.TargetChunkSize)
-	if err != nil {
-		return err
-	}
-
-	s.chunks = append(s.chunks, chunkDesc{
-		chunk: c,
-	})
-	s.metrics.chunksCreatedTotal.Inc()
-	return nil
-}
-
 // setChunks is used during checkpoint recovery
 func (s *stream) setChunks(chunks []Chunk) (bytesAdded, entriesAdded int, err error) {
 	s.chunkMtx.Lock()
@@ -171,14 +156,18 @@ func (s *stream) setChunks(chunks []Chunk) (bytesAdded, entriesAdded int, err er
 	}
 	s.chunks = chks
 	for _, c := range s.chunks {
-		entriesAdded += c.chunk.Size()
-		bytesAdded += c.chunk.UncompressedSize()
+		entriesAdded += c.memChunk.Size()
+		bytesAdded += c.memChunk.UncompressedSize()
 	}
 	return bytesAdded, entriesAdded, nil
 }
 
-func (s *stream) NewChunk() *chunkenc.MemChunk {
+func (s *stream) NewMemChunk() *chunkenc.MemChunk {
 	return chunkenc.NewMemChunk(s.chunkFormat, s.cfg.parsedEncoding, s.chunkHeadBlockFormat, s.cfg.BlockSize, s.cfg.TargetChunkSize)
+}
+
+func (s *stream) NewParquetChunk() *ParquetChunk {
+	return NewParquetChunk(4 << 20)
 }
 
 func (s *stream) Push(
@@ -228,7 +217,8 @@ func (s *stream) Push(
 	prevNumChunks := len(s.chunks)
 	if prevNumChunks == 0 {
 		s.chunks = append(s.chunks, chunkDesc{
-			chunk: s.NewChunk(),
+			memChunk:     s.NewMemChunk(),
+			parquetChunk: s.NewParquetChunk(),
 		})
 		s.metrics.chunksCreatedTotal.Inc()
 		s.metrics.chunkCreatedStats.Inc(1)
@@ -347,12 +337,15 @@ func (s *stream) storeEntries(ctx context.Context, entries []logproto.Entry, usa
 	storedEntries := make([]logproto.Entry, 0, len(entries))
 	for i := 0; i < len(entries); i++ {
 		chunk := &s.chunks[len(s.chunks)-1]
-		if chunk.closed || !chunk.chunk.SpaceFor(&entries[i]) || s.cutChunkForSynchronization(entries[i].Timestamp, s.highestTs, chunk, s.cfg.SyncPeriod, s.cfg.SyncMinUtilization) {
+
+		if chunk.closed || !chunk.memChunk.SpaceFor(&entries[i]) || s.cutChunkForSynchronization(entries[i].Timestamp, s.highestTs, chunk, s.cfg.SyncPeriod, s.cfg.SyncMinUtilization) {
 			chunk = s.cutChunk(ctx)
 		}
 
 		chunk.lastUpdated = time.Now()
-		dup, err := chunk.chunk.Append(&entries[i])
+
+		// ------------------ Loki chunk
+		dup, err := chunk.memChunk.Append(&entries[i])
 		if err != nil {
 			invalid = append(invalid, entryWithError{&entries[i], err})
 			if chunkenc.IsOutOfOrderErr(err) {
@@ -364,6 +357,12 @@ func (s *stream) storeEntries(ctx context.Context, entries []logproto.Entry, usa
 		}
 		if dup {
 			s.handleLoggingOfDuplicateEntry(entries[i])
+		}
+
+		// ------------------ Parquet chunk
+		if err := chunk.parquetChunk.Append(&entries[i]); err != nil {
+			invalid = append(invalid, entryWithError{&entries[i], err})
+			continue
 		}
 
 		s.entryCt++
@@ -511,22 +510,38 @@ func (s *stream) cutChunk(ctx context.Context) *chunkDesc {
 
 	// If the chunk has no more space call Close to make sure anything in the head block is cut and compressed
 	chunk := &s.chunks[len(s.chunks)-1]
-	err := chunk.chunk.Close()
-	if err != nil {
-		// This should be an unlikely situation, returning an error up the stack doesn't help much here
-		// so instead log this to help debug the issue if it ever arises.
-		level.Error(util_log.WithContext(ctx, util_log.Logger)).Log("msg", "failed to Close chunk", "err", err)
+
+	level.Error(util_log.WithContext(ctx, util_log.Logger)).Log("msg", "cut chunk", "loki_chunk", chunk.memChunk, "parquet_chunk", chunk.parquetChunk)
+
+	if chunk.memChunk != nil {
+		if err := chunk.memChunk.Close(); err != nil {
+			// This should be an unlikely situation, returning an error up the stack doesn't help much here
+			// so instead log this to help debug the issue if it ever arises.
+			level.Error(util_log.WithContext(ctx, util_log.Logger)).Log("msg", "failed to Close loki chunk", "err", err)
+		}
 	}
+
+	if chunk.parquetChunk != nil {
+		if err := chunk.parquetChunk.Close(); err != nil {
+			// This should be an unlikely situation, returning an error up the stack doesn't help much here
+			// so instead log this to help debug the issue if it ever arises.
+			level.Error(util_log.WithContext(ctx, util_log.Logger)).Log("msg", "failed to Close parquet chunk", "err", err)
+		}
+	}
+
 	chunk.closed = true
 
-	s.metrics.samplesPerChunk.Observe(float64(chunk.chunk.Size()))
-	s.metrics.blocksPerChunk.Observe(float64(chunk.chunk.BlockCount()))
+	s.metrics.samplesPerChunk.Observe(float64(chunk.memChunk.Size()))
+	s.metrics.blocksPerChunk.Observe(float64(chunk.memChunk.BlockCount()))
+
 	s.metrics.chunksCreatedTotal.Inc()
 	s.metrics.chunkCreatedStats.Inc(1)
 
 	s.chunks = append(s.chunks, chunkDesc{
-		chunk: s.NewChunk(),
+		memChunk:     s.NewMemChunk(),
+		parquetChunk: s.NewParquetChunk(),
 	})
+
 	return &s.chunks[len(s.chunks)-1]
 }
 
@@ -551,7 +566,7 @@ func (s *stream) cutChunkForSynchronization(entryTimestamp, latestTs time.Time, 
 			return true
 		}
 
-		if c.chunk.Utilization() > minUtilization {
+		if c.memChunk.Utilization() > minUtilization {
 			c.synced = true
 			return true
 		}
@@ -564,8 +579,8 @@ func (s *stream) Bounds() (from, to time.Time) {
 	s.chunkMtx.RLock()
 	defer s.chunkMtx.RUnlock()
 	if len(s.chunks) > 0 {
-		from, _ = s.chunks[0].chunk.Bounds()
-		_, to = s.chunks[len(s.chunks)-1].chunk.Bounds()
+		from, _ = s.chunks[0].memChunk.Bounds()
+		_, to = s.chunks[len(s.chunks)-1].memChunk.Bounds()
 	}
 	return from, to
 }
@@ -580,7 +595,7 @@ func (s *stream) Iterator(ctx context.Context, statsCtx *stats.Context, from, th
 	ordered := true
 
 	for _, c := range s.chunks {
-		mint, maxt := c.chunk.Bounds()
+		mint, maxt := c.memChunk.Bounds()
 
 		// skip this chunk
 		if through.Before(mint) || maxt.Before(from) {
@@ -592,7 +607,7 @@ func (s *stream) Iterator(ctx context.Context, statsCtx *stats.Context, from, th
 		}
 		lastMax = maxt
 
-		itr, err := c.chunk.Iterator(ctx, from, through, direction, pipeline)
+		itr, err := c.memChunk.Iterator(ctx, from, through, direction, pipeline)
 		if err != nil {
 			return nil, err
 		}
@@ -627,7 +642,7 @@ func (s *stream) SampleIterator(ctx context.Context, statsCtx *stats.Context, fr
 	ordered := true
 
 	for _, c := range s.chunks {
-		mint, maxt := c.chunk.Bounds()
+		mint, maxt := c.memChunk.Bounds()
 
 		// skip this chunk
 		if through.Before(mint) || maxt.Before(from) {
@@ -639,7 +654,7 @@ func (s *stream) SampleIterator(ctx context.Context, statsCtx *stats.Context, fr
 		}
 		lastMax = maxt
 
-		if itr := c.chunk.SampleIterator(ctx, from, through, extractors...); itr != nil {
+		if itr := c.memChunk.SampleIterator(ctx, from, through, extractors...); itr != nil {
 			iterators = append(iterators, itr)
 		}
 	}

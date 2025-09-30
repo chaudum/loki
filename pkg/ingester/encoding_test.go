@@ -67,11 +67,11 @@ func Test_EncodingChunks(t *testing.T) {
 
 				from := []chunkDesc{
 					{
-						chunk: c,
+						memChunk: c,
 					},
 					// test non zero values
 					{
-						chunk:       c,
+						memChunk:    c,
 						closed:      true,
 						synced:      true,
 						flushed:     time.Unix(1, 0),
@@ -101,14 +101,14 @@ func Test_EncodingChunks(t *testing.T) {
 				for i, to := range backAgain {
 					// test the encoding directly as the substructure may change.
 					// for instance the uncompressed size for each block is not included in the encoded version.
-					enc, err := to.chunk.Bytes()
+					enc, err := to.memChunk.Bytes()
 					require.Nil(t, err)
-					to.chunk = nil
+					to.memChunk = nil
 
 					matched := from[i]
-					exp, err := matched.chunk.Bytes()
+					exp, err := matched.memChunk.Bytes()
 					require.Nil(t, err)
-					matched.chunk = nil
+					matched.memChunk = nil
 
 					require.Equal(t, exp, enc)
 					require.Equal(t, matched, to)
