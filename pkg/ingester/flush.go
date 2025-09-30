@@ -8,6 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/catalog"
+	"github.com/apache/iceberg-go/table"
 	"github.com/dustin/go-humanize"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -515,6 +518,9 @@ func (i *Ingester) flushChunk(ctx context.Context, ch *chunk.Chunk) error {
 	}
 	i.metrics.flushedChunksStats.Inc(1)
 	return nil
+
+	// key := config.ExternalKey(ch.ChunkRef, i.store.GetSchemaConfigs())
+	// return registerFile(ctx, key)
 }
 
 // reportFlushedChunkStatistics calculate overall statistics of flushed chunks without compromising the flush process.
@@ -551,4 +557,26 @@ func (i *Ingester) reportFlushedChunkStatistics(ch *chunk.Chunk, desc *chunkDesc
 	i.metrics.flushedChunksUtilizationStats.Record(utilization)
 	i.metrics.flushedChunksAgeStats.Record(time.Since(boundsFrom).Seconds())
 	i.metrics.flushedChunksLifespanStats.Record(boundsTo.Sub(boundsFrom).Seconds())
+}
+
+func registerFile(ctx context.Context, path string) error {
+	// Load catalog and table
+	cat, err := catalog.Load(ctx, "logslake", iceberg.Properties{"uri": "http://localhost:8181"})
+	if err != nil {
+		return err
+	}
+
+	tbl, err := cat.LoadTable(ctx, table.Identifier{"loki", "chunks"})
+	if err != nil {
+		return err
+	}
+
+	// Create transaction to add files
+	txn := tbl.NewTransaction()
+
+	txn.AddFiles(ctx, []string{path}, tbl.CurrentSnapshot().Summary.Properties, true)
+
+	// Commit transaction
+	_, err = txn.Commit(ctx)
+	return err
 }

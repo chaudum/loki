@@ -733,10 +733,14 @@ func (cfg SchemaConfig) ChunkTableFor(t model.Time) (string, error) {
 
 // SchemaForTime returns the Schema PeriodConfig to use for a given point in time.
 func (cfg SchemaConfig) SchemaForTime(t model.Time) (PeriodConfig, error) {
-	for i := range cfg.Configs {
-		// TODO: callum, confirm we can rely on the schema configs being sorted in this order.
-		if t >= cfg.Configs[i].From.Time && (i+1 == len(cfg.Configs) || t < cfg.Configs[i+1].From.Time) {
-			return cfg.Configs[i], nil
+	return configForTime(cfg.Configs, t)
+}
+
+// configForTime returns the Schema PeriodConfig to use for a given point in time.
+func configForTime(configs []PeriodConfig, t model.Time) (PeriodConfig, error) {
+	for i := range configs {
+		if t >= configs[i].From.Time && (i+1 == len(configs) || t < configs[i+1].From.Time) {
+			return configs[i], nil
 		}
 	}
 	return PeriodConfig{}, fmt.Errorf("no schema config found for time %v", t)
@@ -758,6 +762,15 @@ func (cfg *PeriodicTableConfig) tableForPeriod(i int64) string {
 // Generate the appropriate external key based on cfg.Schema, chunk.Checksum, and chunk.From
 func (cfg SchemaConfig) ExternalKey(ref logproto.ChunkRef) string {
 	p, err := cfg.SchemaForTime(ref.From)
+	v, _ := p.VersionAsInt()
+	if err == nil && v >= 12 {
+		return newerExternalKey(ref)
+	}
+	return newExternalKey(ref)
+}
+
+func ExternalKey(ref logproto.ChunkRef, configs []PeriodConfig) string {
+	p, err := configForTime(configs, ref.From)
 	v, _ := p.VersionAsInt()
 	if err == nil && v >= 12 {
 		return newerExternalKey(ref)
