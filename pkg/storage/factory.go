@@ -272,6 +272,16 @@ func (ns *NamedStores) Exists(name string) bool {
 	return ok
 }
 
+type IcebergConfig struct {
+	CatalogName string `yaml:"catalog_name,omitempty"`
+	CatalogURI  string `yaml:"catalog_uri,omitempty"`
+}
+
+func (cfg IcebergConfig) RegisterFlagsWithPrefix(s string, f *flag.FlagSet) {
+	f.StringVar(&cfg.CatalogName, ".catalog-name", "logslake", "The name of the Apache Iceberg Catalog. Equals to the bucket name when using AWS S3Tables.")
+	f.StringVar(&cfg.CatalogURI, ".catalog-uri", "http://localhost:8181", "The URI of the Apache Iceberg REST Catalog.")
+}
+
 // Config chooses which storage client to use.
 type Config struct {
 	AlibabaStorageConfig   alibaba.OssConfig         `yaml:"alibabacloud"`
@@ -308,6 +318,9 @@ type Config struct {
 	// It is required for getting chunk ids of recently flushed chunks from the ingesters.
 	EnableAsyncStore bool          `yaml:"-"`
 	AsyncStoreConfig AsyncStoreCfg `yaml:"-"`
+
+	// Experimental Apache Iceberg integration
+	Iceberg IcebergConfig `yaml:"iceberg"`
 }
 
 // RegisterFlags adds the flags required to configure this flag set.
@@ -326,6 +339,7 @@ func (cfg *Config) RegisterFlags(f *flag.FlagSet) {
 	cfg.GrpcConfig.RegisterFlags(f)
 	cfg.Hedging.RegisterFlagsWithPrefix("store.", f)
 	cfg.CongestionControl.RegisterFlagsWithPrefix("store.", f)
+	cfg.Iceberg.RegisterFlagsWithPrefix("store.", f)
 
 	f.BoolVar(&cfg.UseThanosObjstore, "use-thanos-objstore", false, "Enables the use of thanos-io/objstore clients for connecting to object storage. When set to true, the configuration inside `storage_config.object_store` or `common.storage.object_store` block takes effect.")
 	cfg.ObjectStore.RegisterFlagsWithPrefix("object-store.", f)

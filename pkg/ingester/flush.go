@@ -541,7 +541,7 @@ func (i *Ingester) flushParquetChunk(ctx context.Context, chunk *ParquetChunk) e
 		return fmt.Errorf("store put parquet chunk: %w", err)
 	}
 
-	cat, err := catalog.Load(ctx, i.cfg.CatalogName, iceberg.Properties{"uri": i.cfg.CatalogURI})
+	cat, err := catalog.Load(ctx, i.cfg.Iceberg.CatalogName, iceberg.Properties{"uri": i.cfg.Iceberg.CatalogURI})
 	if err != nil {
 		return err
 	}

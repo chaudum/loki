@@ -125,18 +125,13 @@ type Config struct {
 	// Optional wrapper that can be used to modify the behaviour of the ingester
 	Wrapper Wrapper `yaml:"-"`
 
-	IndexShards int `yaml:"index_shards"`
-
-	MaxDroppedStreams int `yaml:"max_dropped_streams"`
-
-	ShutdownMarkerPath string `yaml:"shutdown_marker_path"`
-
+	IndexShards               int           `yaml:"index_shards"`
+	MaxDroppedStreams         int           `yaml:"max_dropped_streams"`
+	ShutdownMarkerPath        string        `yaml:"shutdown_marker_path"`
 	OwnedStreamsCheckInterval time.Duration `yaml:"owned_streams_check_interval" doc:"description=Interval at which the ingester ownedStreamService checks for changes in the ring to recalculate owned streams."`
 
-	KafkaIngestion KafkaIngestionConfig `yaml:"kafka_ingestion,omitempty"`
-
-	CatalogName string `yaml:"iceberg_catalog_name,omitempty"`
-	CatalogURI  string `yaml:"iceberg_catalog_uri,omitempty"`
+	KafkaIngestion KafkaIngestionConfig  `yaml:"kafka_ingestion,omitempty"`
+	Iceberg        storage.IcebergConfig `yaml:"-"` // Will be populated from [storage.Config]
 }
 
 // RegisterFlags registers the flags.
@@ -166,8 +161,6 @@ func (cfg *Config) RegisterFlags(f *flag.FlagSet) {
 	f.IntVar(&cfg.MaxDroppedStreams, "ingester.tailer.max-dropped-streams", 10, "Maximum number of dropped streams to keep in memory during tailing.")
 	f.StringVar(&cfg.ShutdownMarkerPath, "ingester.shutdown-marker-path", "", "Path where the shutdown marker file is stored. If not set and common.path_prefix is set then common.path_prefix will be used.")
 	f.DurationVar(&cfg.OwnedStreamsCheckInterval, "ingester.owned-streams-check-interval", 30*time.Second, "Interval at which the ingester ownedStreamService checks for changes in the ring to recalculate owned streams.")
-	f.StringVar(&cfg.CatalogName, "ingester.iceberg-catalog-name", "logslake", "Name of the Apache Iceberg REST Catalog")
-	f.StringVar(&cfg.CatalogURI, "ingester.iceberg-catalog-uri", "http://localhost:8181", "URI for Apache Iceberg REST Catalog")
 }
 
 func (cfg *Config) Validate() error {
@@ -258,6 +251,7 @@ type Ingester struct {
 
 	store           Store
 	periodicConfigs []config.PeriodConfig
+	storageCfg      storage.Config
 
 	loopDone    sync.WaitGroup
 	loopQuit    chan struct{}
